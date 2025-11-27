@@ -1,0 +1,25 @@
+# Caddy reverse proxy configuration
+# Listens on port 3000 and proxies to the API service on port 3001
+
+:3000 {
+    # Reverse proxy to the API service
+    reverse_proxy api:3001 {
+        # Preserve original request headers
+        header_up Host {host}
+        header_up X-Real-IP {remote}
+        header_up X-Forwarded-For {remote}
+        header_up X-Forwarded-Proto {scheme}
+        
+        # WebSocket support
+        header_up Connection {>Connection}
+        header_up Upgrade {>Upgrade}
+    }
+    
+    # Basic logging
+    log {
+        output stdout
+        format console
+    }
+}
+
+

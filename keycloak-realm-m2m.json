@@ -1,0 +1,46 @@
+{
+  "realm": "example-m2m",
+  "enabled": true,
+  "displayName": "Machine-to-Machine Realm",
+  "sslRequired": "external",
+  "registrationAllowed": false,
+  "registrationEmailAsUsername": false,
+  "rememberMe": false,
+  "verifyEmail": false,
+  "loginWithEmailAllowed": false,
+  "duplicateEmailsAllowed": false,
+  "resetPasswordAllowed": false,
+  "editUsernameAllowed": false,
+  "bruteForceProtected": false,
+  "defaultRoles": [
+    "offline_access",
+    "uma_authorization"
+  ],
+  "requiredCredentials": [
+    "password"
+  ],
+  "attributes": {
+    "accessTokenLifespan": "315360000",
+    "accessTokenLifespanForImplicitFlow": "315360000",
+    "ssoSessionIdleTimeout": "1800",
+    "ssoSessionMaxLifespan": "36000",
+    "offlineSessionIdleTimeout": "2592000",
+    "offlineSessionMaxLifespanEnabled": "false",
+    "offlineSessionMaxLifespan": "5184000"
+  },
+  "clients": [],
+  "clientScopes": [],
+  "defaultDefaultClientScopes": [
+    "role_list",
+    "profile",
+    "email",
+    "roles",
+    "web-origins",
+    "microprofile-jwt"
+  ],
+  "defaultOptionalClientScopes": [
+    "offline_access",
+    "address",
+    "phone"
+  ]
+}
