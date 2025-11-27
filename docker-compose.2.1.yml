@@ -1,0 +1,75 @@
+version: '2.1'
+
+services:
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: fusionpbx-cdr-api
+    restart: unless-stopped
+    # No host port mapping - only accessible on internal network
+    expose:
+      - "3001"
+    environment:
+      # Load environment variables from .env file
+      - KEYCLOAK_SERVER_URL=${KEYCLOAK_SERVER_URL}
+      - KEYCLOAK_REALM=${KEYCLOAK_REALM}
+      - KEYCLOAK_AUDIENCE=${KEYCLOAK_AUDIENCE}
+      - KEYCLOAK_ALGORITHMS=${KEYCLOAK_ALGORITHMS:-RS256}
+      - FUSIONPBX_DB_HOST=${FUSIONPBX_DB_HOST}
+      - FUSIONPBX_DB_PORT=${FUSIONPBX_DB_PORT:-5432}
+      - FUSIONPBX_DB_NAME=${FUSIONPBX_DB_NAME}
+      - FUSIONPBX_DB_USER=${FUSIONPBX_DB_USER}
+      - FUSIONPBX_DB_PASSWORD=${FUSIONPBX_DB_PASSWORD}
+      - FUSIONPBX_DB_SCHEMA=${FUSIONPBX_DB_SCHEMA:-public}
+      - APP_DEBUG=${APP_DEBUG:-False}
+      - APP_LOG_LEVEL=${APP_LOG_LEVEL:-INFO}
+      - APP_PORT=${APP_PORT:-3001}
+      - APP_SERVER_URI=${APP_SERVER_URI:-}
+      - APP_RECORDING_PATH=${APP_RECORDING_PATH:-/var/lib/freeswitch/recordings}
+      - FUSIONPBX_RECORDING_PATH=${FUSIONPBX_RECORDING_PATH:-/var/lib/freeswitch/recordings}
+      - ALLOWED_ORIGINS=${ALLOWED_ORIGINS:-["http://localhost:3000"]}
+    volumes:
+      # Mount recordings directory (read-only recommended for security)
+      - recordings:/var/lib/freeswitch/recordings:ro
+    networks:
+      - app_network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3001/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  caddy:
+    image: caddy:2-alpine
+    container_name: fusionpbx-cdr-caddy
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    networks:
+      - app_network
+    depends_on:
+      - api
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:3000/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+volumes:
+  recordings:
+    driver: local
+  caddy_data:
+    driver: local
+  caddy_config:
+    driver: local
+
+networks:
+  app_network:
+    driver: bridge
+
+
