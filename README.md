@@ -490,50 +490,277 @@ ALLOWED_ORIGINS=["http://localhost:3000", "https://example.com"]
 
 #### Option A: Using Docker Compose (Recommended)
 
-1. **Ensure you have Docker and Docker Compose installed**
+##### Prerequisites
 
-2. **Configure environment variables:**
+- **Docker**: Version 20.10 or higher
+- **Docker Compose**: Version 2.0 or higher (or Docker Compose V2 plugin)
+- **Access to FusionPBX database**: The API needs network access to your FusionPBX PostgreSQL database
+- **Recordings directory**: Access to FusionPBX call recordings directory (if using recordings feature)
+
+##### Step 1: Configure Environment Variables
+
+1. **Copy the example environment file:**
    ```bash
    cp env.example .env
-   # Edit .env with your configuration
    ```
 
-3. **Configure recordings volume:**
-   - Update the `recordings` volume mount in `docker-compose.yml` to point to your FusionPBX recordings directory
-   - Or modify the volume configuration to use a bind mount:
-     ```yaml
-     volumes:
-       - /path/to/fusionpbx/recordings:/var/lib/freeswitch/recordings:ro
-     ```
+2. **Edit `.env` with your configuration:**
+   ```env
+   # Keycloak Configuration
+   KEYCLOAK_SERVER_URL=https://sso.example.com
+   KEYCLOAK_REALM=your-realm-name
+   KEYCLOAK_AUDIENCE=your-client-id-or-resource
+   KEYCLOAK_ALGORITHMS=RS256
 
-4. **Start the stack:**
+   # Database Configuration (FusionPBX)
+   # For external database, use the hostname/IP of your FusionPBX server
+   FUSIONPBX_DB_HOST=your-fusionpbx-server-ip
+   FUSIONPBX_DB_PORT=5432
+   FUSIONPBX_DB_NAME=fusionpbx
+   FUSIONPBX_DB_USER=fusionpbx
+   FUSIONPBX_DB_PASSWORD=your_database_password
+   FUSIONPBX_DB_SCHEMA=public
+
+   # Application Configuration
+   APP_DEBUG=False
+   APP_LOG_LEVEL=INFO
+   APP_PORT=3001
+   # Optional: Set explicit server URI for recording URLs (auto-detected if not set)
+   # APP_SERVER_URI=http://your-domain.com
+   APP_RECORDING_PATH=/var/lib/freeswitch/recordings
+   FUSIONPBX_RECORDING_PATH=/var/lib/freeswitch/recordings
+
+   # CORS Configuration
+   ALLOWED_ORIGINS=["http://localhost:3000", "https://example.com"]
+   ```
+
+   **Important Notes:**
+   - `FUSIONPBX_DB_HOST`: Use the IP address or hostname of your FusionPBX server. If running on the same host, use `host.docker.internal` (Docker Desktop) or the host's IP address.
+   - `FUSIONPBX_DB_PASSWORD`: Use the actual database password from your FusionPBX installation.
+   - `APP_SERVER_URI`: Optional. If not set, the API will auto-detect from request headers. Set this if you're behind a reverse proxy or need specific URLs in responses.
+
+##### Step 2: Configure Recordings Volume
+
+The Docker Compose setup uses a named volume by default. For production, you'll want to mount your actual FusionPBX recordings directory.
+
+**Option A: Bind Mount (Recommended for Production)**
+
+Edit `docker-compose.yml` and replace the recordings volume section:
+
+```yaml
+services:
+  api:
+    volumes:
+      # Mount your FusionPBX recordings directory
+      - /path/to/fusionpbx/recordings:/var/lib/freeswitch/recordings:ro
+```
+
+**Option B: Named Volume (Default - for testing)**
+
+The default configuration uses a named volume. This is fine for testing but won't contain your actual recordings:
+
+```yaml
+volumes:
+  recordings:
+    driver: local
+```
+
+**Security Note:** The recordings volume is mounted as read-only (`:ro`) for security. The API only needs to read recording files, not write them.
+
+##### Step 3: Database Network Access
+
+If your FusionPBX database is on a different host, ensure:
+
+1. **PostgreSQL is accessible from Docker network:**
+   - Check PostgreSQL `postgresql.conf`: `listen_addresses = '*'` or specific IP
+   - Check `pg_hba.conf`: Allow connections from Docker network IP range (typically `172.x.x.x/16`)
+
+2. **Firewall rules:**
+   - Allow connections from Docker host to FusionPBX database port (default: 5432)
+
+3. **For same-host database:**
+   - Use `host.docker.internal` as `FUSIONPBX_DB_HOST` (Docker Desktop)
+   - Or use the host's actual IP address
+   - Or use `network_mode: "host"` in docker-compose.yml (Linux only, less secure)
+
+##### Step 4: Build and Start the Stack
+
+1. **Build the Docker image:**
+   ```bash
+   docker-compose build
+   ```
+
+2. **Start the services:**
    ```bash
    docker-compose up -d
    ```
 
-5. **View logs:**
+   This will:
+   - Build the API service image
+   - Pull the Caddy reverse proxy image
+   - Start both services in detached mode
+   - Create necessary networks and volumes
+
+3. **Verify services are running:**
    ```bash
-   docker-compose logs -f
+   docker-compose ps
    ```
 
-6. **Stop the stack:**
+   You should see both `fusionpbx-cdr-api` and `fusionpbx-cdr-caddy` services with status "Up".
+
+##### Step 5: View Logs
+
+**View all logs:**
+```bash
+docker-compose logs -f
+```
+
+**View specific service logs:**
+```bash
+# API service logs
+docker-compose logs -f api
+
+# Caddy proxy logs
+docker-compose logs -f caddy
+```
+
+**View last 100 lines:**
+```bash
+docker-compose logs --tail=100 api
+```
+
+##### Step 6: Access the Application
+
+Once running, the application is available at:
+- **API Base URL**: http://localhost:3000
+- **Swagger UI**: http://localhost:3000/docs
+- **ReDoc**: http://localhost:3000/redoc
+- **Health Check**: http://localhost:3000/ (returns API information)
+
+##### Step 7: Stop and Cleanup
+
+**Stop services (keeps containers):**
+```bash
+docker-compose stop
+```
+
+**Stop and remove containers:**
+```bash
+docker-compose down
+```
+
+**Stop, remove containers, and volumes:**
+```bash
+docker-compose down -v
+```
+
+**Stop, remove containers, volumes, and images:**
+```bash
+docker-compose down -v --rmi all
+```
+
+##### Architecture Overview
+
+The Docker Compose setup consists of two services:
+
+1. **API Service** (`fusionpbx-cdr-api`):
+   - Built from the project's Dockerfile
+   - Runs FastAPI application on port 3001 (internal)
+   - Not exposed directly to host (only accessible via Caddy)
+   - Includes health checks
+   - Mounts recordings directory (read-only)
+
+2. **Caddy Service** (`fusionpbx-cdr-caddy`):
+   - Official Caddy 2 Alpine image
+   - Reverse proxy listening on host port 3000
+   - Proxies all requests to API service
+   - Handles SSL/TLS termination (if configured)
+   - Preserves request headers for proper forwarding
+
+**Network Architecture:**
+```
+Internet → Host:3000 (Caddy) → Docker Network → API:3001
+```
+
+**Benefits:**
+- API service is not directly exposed (security)
+- Easy SSL/TLS configuration via Caddy
+- Request header preservation
+- Health checks for both services
+- Automatic restart on failure
+
+##### Port Configuration
+
+- **Caddy Proxy Port**: Configured in `docker-compose.yml` ports section (default: `3000:3000`)
+  - Change host port: `"8080:3000"` to use port 8080 on host
+- **API Internal Port**: Configured via `APP_PORT` environment variable (default: 3001)
+  - Only accessible within Docker network
+  - Do not expose this port to host for security
+
+##### Health Checks
+
+Both services include health checks:
+
+- **API Service**: Checks `http://localhost:3001/` every 30 seconds
+- **Caddy Service**: Checks `http://localhost:3000/` every 30 seconds
+
+If a service fails its health check, Docker will restart it automatically.
+
+##### Updating the Application
+
+1. **Pull latest code:**
    ```bash
-   docker-compose down
+   git pull
    ```
 
-The application will be available at:
-- API: http://localhost:3000
-- Swagger UI: http://localhost:3000/docs
-- ReDoc: http://localhost:3000/redoc
+2. **Rebuild and restart:**
+   ```bash
+   docker-compose up -d --build
+   ```
 
-**Architecture:**
-- Caddy reverse proxy listens on host port **3000**
-- API service runs on internal port **3001** (not exposed to host)
-- All traffic goes through Caddy for security and flexibility
+   Or rebuild specific service:
+   ```bash
+   docker-compose up -d --build api
+   ```
 
-**Port Configuration:**
-- The application port can be configured via `APP_PORT` environment variable (default: 3001)
-- Caddy proxy port is configured in `docker-compose.yml` (default: 3000)
+##### Troubleshooting
+
+**Service won't start:**
+```bash
+# Check logs for errors
+docker-compose logs api
+
+# Check if port is already in use
+netstat -tulpn | grep 3000
+```
+
+**Database connection errors:**
+- Verify `FUSIONPBX_DB_HOST` is correct and reachable
+- Check PostgreSQL is listening on the expected port
+- Verify firewall rules allow connections
+- Test connection from Docker host: `psql -h <host> -U <user> -d <database>`
+
+**Recordings not found:**
+- Verify recordings volume is mounted correctly
+- Check `APP_RECORDING_PATH` matches the mount point in container
+- Verify file permissions on host recordings directory
+- Check API logs for path resolution issues
+
+**CORS errors:**
+- Update `ALLOWED_ORIGINS` in `.env` to include your frontend domain
+- Restart services after changing environment variables
+
+**View service status:**
+```bash
+# Check service status
+docker-compose ps
+
+# Check resource usage
+docker stats
+
+# Inspect service configuration
+docker-compose config
+```
 
 #### Option B: Local Development
 
