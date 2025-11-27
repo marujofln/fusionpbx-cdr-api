@@ -1,4 +1,4 @@
-version: '3.8'
+version: '2.1'
 
 services:
   api:
@@ -39,7 +39,6 @@ services:
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 40s
 
   caddy:
     image: caddy:2-alpine
@@ -60,7 +59,6 @@ services:
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 10s
 
 volumes:
   recordings:
