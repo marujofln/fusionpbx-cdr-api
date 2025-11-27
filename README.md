@@ -53,14 +53,15 @@ Retrieves call detail records for the authenticated user's domain.
 {
   "cdrs": [
     {
-      "id": 1,
+      "xml_cdr_uuid": "550e8400-e29b-41d4-a716-446655440000",
       "domain_name": "example.com",
       "caller_id_number": "+1234567890",
       "destination_number": "+0987654321",
       "start_stamp": "2024-01-01T10:00:00Z",
-      "duration": 300,
-      "billsec": 300,
-      "hangup_cause": "NORMAL_CLEARING"
+      "duration": 300.0,
+      "billsec": 300.0,
+      "hangup_cause": "NORMAL_CLEARING",
+      "recording": "http://localhost:3000/v1/recording/example.com/archive/2024/Jan/01/file.mp3"
     }
   ],
   "total": 1,
@@ -68,9 +69,63 @@ Retrieves call detail records for the authenticated user's domain.
 }
 ```
 
+#### GET /v1/cdr_compat
+Retrieves call detail records in legacy-compatible format for the authenticated user's domain. This endpoint provides a simplified, flat structure suitable for legacy integrations.
+
+**Query Parameters:**
+- `period` (optional): Time period filter (same as `/v1/cdr`)
+  - `today`, `yesterday`, `last_7_days`, `last_30_days`, `this_week`, `this_month`, `this_year`
+- `start_date` (optional): Custom start date (ISO format)
+- `end_date` (optional): Custom end date (ISO format)
+
+**Response:**
+```json
+[
+  {
+    "date": "01/01/2024 10:00:00",
+    "type": "inbound",
+    "origin": "+1234567890",
+    "destination": "+0987654321",
+    "duration": "00:05:00",
+    "cost": "R$ 0.00",
+    "status": "NORMAL_CLEARING",
+    "audio": "http://localhost:3000/v1/recording/example.com/archive/2024/Jan/01/file.mp3"
+  }
+]
+```
+
+#### GET /v1/recording/{file_path:path}
+Retrieves audio recording files from the filesystem. This endpoint does not require authentication but includes path traversal protection to ensure files can only be accessed within the configured recording base path.
+
+**Path Parameters:**
+- `file_path` (path): Relative path to the recording file from the base recording path
+  - Example: `example.com/archive/2025/Nov/24/file.mp3`
+  - Full URL: `/v1/recording/example.com/archive/2025/Nov/24/file.mp3`
+
+**Response:**
+- Returns the audio file with appropriate `Content-Type` header
+- Supported formats: `.wav`, `.mp3`, `.ogg`, `.m4a`, `.flac`
+- Default media type: `audio/mpeg` for unknown extensions
+
+**Security:**
+- Path traversal protection ensures files can only be accessed within the base recording path
+- Returns `403 Forbidden` if the requested path is outside the base directory
+- Returns `404 Not Found` if the file doesn't exist
+
+**Example:**
+```bash
+curl -X GET "http://localhost:3000/v1/recording/example.com/archive/2024/Jan/01/recording.mp3" \
+  -H "Accept: audio/mpeg" \
+  --output recording.mp3
+```
+
 ## Examples
 
 ### Getting an Access Token and Calling the API
+
+> **Note**: For production use, we recommend [Machine-to-Machine (M2M) Authentication](#machine-to-machine-m2m-authentication) using Client Credentials Grant. The password grant flow shown below is primarily for testing purposes.
+
+#### Password Grant (Testing Only)
 
 1. **Get an access token from Keycloak:**
 
@@ -120,6 +175,8 @@ curl -X GET "http://localhost:3000/v1/me" \
 ```
 
 ## Machine-to-Machine (M2M) Authentication
+
+> **Recommended for Production**: M2M authentication is the recommended approach for production deployments, automated systems, and integrations.
 
 This API supports machine-to-machine authentication using Keycloak's Client Credentials Grant flow with long-lived tokens (10 years). This is ideal for automated systems, monitoring tools, and applications running on remote machines without user interaction.
 
@@ -414,7 +471,9 @@ ALLOWED_ORIGINS=["http://localhost:3000", "https://example.com"]
 
 ### 3. Keycloak Setup
 
-For user-based authentication (password grant), follow these steps:
+**For Machine-to-Machine (M2M) authentication** (recommended for production), see the [Machine-to-Machine Authentication](#machine-to-machine-m2m-authentication) section above for detailed configuration steps.
+
+**For user-based authentication (password grant - testing only)**, follow these steps:
 1. Create a Keycloak client in your realm
 2. Configure JWT settings
 3. Add custom claims for `sip_domain` attribute:
@@ -425,9 +484,7 @@ For user-based authentication (password grant), follow these steps:
    - Claim JSON Type: `String`
    - Add to access token: `ON`
 4. Set up API permissions
-5. Enable "Direct Access Grants" flow if using password grant for testing
-
-**For Machine-to-Machine (M2M) authentication**, see the [Machine-to-Machine Authentication](#machine-to-machine-m2m-authentication) section above for detailed configuration steps.
+5. Enable "Direct Access Grants" flow for password grant testing
 
 ### 4. Run the Application
 
@@ -502,8 +559,10 @@ fusionpbx-cdr-api/
 │   ├── api/
 │   │   └── v1/
 │   │       ├── endpoints/
+│   │       │   ├── auth.py
 │   │       │   ├── me.py
-│   │       │   └── cdr.py
+│   │       │   ├── cdr.py
+│   │       │   └── recording.py
 │   │       └── api.py
 │   ├── core/
 │   │   ├── config.py
