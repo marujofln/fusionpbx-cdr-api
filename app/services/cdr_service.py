@@ -2,8 +2,9 @@
 
 from datetime import datetime, timedelta
 from typing import List, Optional
-from sqlalchemy.orm import Session
-from sqlalchemy import and_, func
+
+from sqlalchemy import and_, func, select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.cdr import CDR
 from app.schemas.cdr import CDRResponse
@@ -13,8 +14,8 @@ class CDRService:
     """Service for CDR operations."""
 
     @staticmethod
-    def get_cdrs_by_period(
-        db: Session, domain: str, period: Optional[str] = None
+    async def get_cdrs_by_period(
+        db: AsyncSession, domain: str, period: Optional[str] = None
     ) -> List[CDR]:
         """Get CDRs by time period."""
         now = datetime.utcnow()
@@ -48,31 +49,45 @@ class CDRService:
             start_date = now - timedelta(hours=1)
             end_date = now
 
-        return db.query(CDR).filter(
-            and_(
-                CDR.domain_name == domain,
-                CDR.start_stamp >= start_date,
-                CDR.start_stamp < end_date
+        stmt = (
+            select(CDR)
+            .filter(
+                and_(
+                    CDR.domain_name == domain,
+                    CDR.start_stamp >= start_date,
+                    CDR.start_stamp < end_date
+                )
             )
-        ).order_by(CDR.start_stamp.desc()).all()
+            .order_by(CDR.start_stamp.desc())
+        )
+        result = await db.execute(stmt)
+        return list(result.scalars().unique().all())
 
     @staticmethod
-    def get_cdrs_by_date_range(
-        db: Session, domain: str, start_date: datetime, end_date: datetime
+    async def get_cdrs_by_date_range(
+        db: AsyncSession, domain: str, start_date: datetime, end_date: datetime
     ) -> List[CDR]:
         """Get CDRs by custom date range."""
-        return db.query(CDR).filter(
-            and_(
-                CDR.domain_name == domain,
-                CDR.start_stamp >= start_date,
-                CDR.start_stamp <= end_date
+        stmt = (
+            select(CDR)
+            .filter(
+                and_(
+                    CDR.domain_name == domain,
+                    CDR.start_stamp >= start_date,
+                    CDR.start_stamp <= end_date
+                )
             )
-        ).order_by(CDR.start_stamp.desc()).all()
+            .order_by(CDR.start_stamp.desc())
+        )
+        result = await db.execute(stmt)
+        return list(result.scalars().unique().all())
 
     @staticmethod
-    def get_cdr_count(db: Session, domain: str) -> int:
+    async def get_cdr_count(db: AsyncSession, domain: str) -> int:
         """Get total CDR count for domain."""
-        return db.query(func.count(CDR.xml_cdr_uuid)).filter(CDR.domain_name == domain).scalar()
+        stmt = select(func.count(CDR.xml_cdr_uuid)).filter(CDR.domain_name == domain)
+        result = await db.execute(stmt)
+        return result.scalar() or 0
 
 
 

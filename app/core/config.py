@@ -16,6 +16,18 @@ except ImportError:
 from app import __version__ as app_version
 
 
+def _resolve_env_file_path() -> str:
+    """Resolve .env file path - check current directory and project root."""
+    if os.path.exists(".env"):
+        return os.path.abspath(".env")
+    # Try project root (where this file is located)
+    project_root = Path(__file__).parent.parent.parent
+    env_file_path = project_root / ".env"
+    if env_file_path.exists():
+        return str(env_file_path.absolute())
+    return ".env"
+
+
 class Settings(BaseSettings):
     """Application settings configuration."""
 
@@ -75,19 +87,8 @@ class Settings(BaseSettings):
     # CORS Configuration
     allowed_origins: List[str] = Field(["http://localhost:3000"], env="ALLOWED_ORIGINS")
 
-    # Resolve .env file path - check current directory and project root
-    _env_file_path = None
-    if os.path.exists(".env"):
-        _env_file_path = os.path.abspath(".env")
-    else:
-        # Try project root (where this file is located)
-        project_root = Path(__file__).parent.parent.parent
-        env_file_path = project_root / ".env"
-        if env_file_path.exists():
-            _env_file_path = str(env_file_path.absolute())
-
     model_config = SettingsConfigDict(
-        env_file=_env_file_path or ".env",
+        env_file=_resolve_env_file_path(),
         env_file_encoding="utf-8",
         case_sensitive=False,
         extra="ignore",  # Ignore extra fields (like old AUTH0_* vars) instead of raising errors
@@ -105,7 +106,7 @@ class Settings(BaseSettings):
                 "FUSIONPBX_DB_PASSWORD is required for database operations"
             )
         return (
-            f"postgresql://{self.fusionpbx_db_user}:{self.fusionpbx_db_password}"
+            f"postgresql+asyncpg://{self.fusionpbx_db_user}:{self.fusionpbx_db_password}"
             f"@{self.fusionpbx_db_host}:{self.fusionpbx_db_port}/{self.fusionpbx_db_name}"
         )
 

@@ -4,7 +4,7 @@ from datetime import datetime
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, Query, Request
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.core.security import get_user_domain
@@ -38,17 +38,17 @@ async def get_cdrs(
         None, description="End date for custom period"
     ),
     domain: str = Depends(get_user_domain),
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
 ) -> CDRListResponse:
     """Get call detail records for the authenticated user's domain."""
 
     if start_date and end_date:
         # Custom date range
-        cdrs = CDRService.get_cdrs_by_date_range(db, domain, start_date, end_date)
+        cdrs = await CDRService.get_cdrs_by_date_range(db, domain, start_date, end_date)
         period_str = f"custom_range_{start_date.date()}_to_{end_date.date()}"
     else:
         # Predefined period
-        cdrs = CDRService.get_cdrs_by_period(db, domain, period)
+        cdrs = await CDRService.get_cdrs_by_period(db, domain, period)
         period_str = period or "last_hour"
 
     # Get server URI from settings or extract from request
@@ -144,16 +144,16 @@ async def get_cdrs_compat(
         None, description="End date for custom period"
     ),
     domain: str = Depends(get_user_domain),
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
 ) -> List[CDRCompatResponse]:
     """Get call detail records in legacy-compatible format for the authenticated user's domain."""
 
     if start_date and end_date:
         # Custom date range
-        cdrs = CDRService.get_cdrs_by_date_range(db, domain, start_date, end_date)
+        cdrs = await CDRService.get_cdrs_by_date_range(db, domain, start_date, end_date)
     else:
         # Predefined period
-        cdrs = CDRService.get_cdrs_by_period(db, domain, period)
+        cdrs = await CDRService.get_cdrs_by_period(db, domain, period)
 
     # Get server URI from settings or extract from request
     server_uri = settings.app_server_uri
