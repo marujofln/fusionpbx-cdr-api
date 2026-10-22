@@ -44,7 +44,7 @@ Request flow: `app/main.py` mounts `app/api/v1/api.py` under `/v1`. It includes 
 
 **Auth and tenant isolation** (`app/core/security.py`):
 - `get_current_user` validates the bearer token against the realm JWKS. The JWKS is fetched once and then cached in-process for the life of the process, with no refresh when keys rotate. The dependency also checks the issuer `{KEYCLOAK_SERVER_URL}/realms/{KEYCLOAK_REALM}`.
-- Audience is checked by hand, and only when the token actually has an `aud` claim, because M2M tokens may not carry one.
+- Audience is checked by hand in `validate_audience`. A token with `aud` must contain `KEYCLOAK_AUDIENCE`. A token without `aud` (legacy M2M tokens issued before the `cdr-api-audience` client scope existed) is accepted only if its `azp` is in `KEYCLOAK_ALLOWED_CLIENTS` (comma-separated, empty by default), and each such acceptance logs a warning. This list is a transition aid; README "Token Audience and KEYCLOAK_ALLOWED_CLIENTS" has the migration steps.
 - `get_user_domain` gets `sip_domain` from the token, returning 403 if it is missing. Every CDR query must filter on `CDR.domain_name == domain`, using this dependency. This filter is the only thing separating tenants.
 
 **Recordings endpoint** (`/v1/recording/{file_path:path}`): **unauthenticated by design**. Its protection is a path-traversal guard: it resolves the path and checks `relative_to(APP_RECORDING_PATH)`. It supports HTTP Range (206), ETag/If-None-Match and If-Modified-Since. Keep the traversal check intact when editing it.

@@ -36,6 +36,8 @@ class Settings(BaseSettings):
     keycloak_realm: str = Field(..., env="KEYCLOAK_REALM")
     keycloak_audience: str = Field(..., env="KEYCLOAK_AUDIENCE")
     keycloak_algorithms: str = Field("RS256", env="KEYCLOAK_ALGORITHMS")
+    # Comma-separated client IDs (azp) still allowed to present tokens without aud
+    keycloak_allowed_clients: str = Field("", env="KEYCLOAK_ALLOWED_CLIENTS")
 
     # Database Configuration
     fusionpbx_db_host: str = Field("localhost", env="FUSIONPBX_DB_HOST")
@@ -93,6 +95,15 @@ class Settings(BaseSettings):
         case_sensitive=False,
         extra="ignore",  # Ignore extra fields (like old AUTH0_* vars) instead of raising errors
     )
+
+    @property
+    def keycloak_allowed_client_ids(self) -> set[str]:
+        """Parse KEYCLOAK_ALLOWED_CLIENTS into a set of client IDs."""
+        return {
+            client_id.strip()
+            for client_id in self.keycloak_allowed_clients.split(",")
+            if client_id.strip()
+        }
 
     @property
     def database_url(self) -> str:

@@ -63,6 +63,10 @@ curl -X POST "https://sso.example.com/admin/realms" \
 
 After importing the realm, you need to:
 
+### 0. Create the API Audience Client Scope (once)
+
+The API rejects tokens without its audience. Create a `cdr-api-audience` client scope with an "Audience" mapper whose Included Custom Audience is the API's `KEYCLOAK_AUDIENCE` value, and with "Add to access token" set to ON. See [README.md](README.md#realm-level-configuration-one-time-setup) for detailed steps.
+
 ### 1. Create M2M Clients for Each Customer
 
 For each customer, create a client following the steps in the main [README.md](README.md#step-1-create-m2m-client-for-customer):
@@ -73,7 +77,8 @@ For each customer, create a client following the steps in the main [README.md](R
 4. Enable "Service Accounts Enabled"
 5. Set Access Token Lifespan: `315360000` seconds
 6. Add `sip_domain` claim via Protocol Mappers
-7. Generate and save the Client Secret
+7. Add the `cdr-api-audience` client scope as **Default** (Client scopes tab)
+8. Generate and save the Client Secret
 
 ### 2. Configure Protocol Mappers
 

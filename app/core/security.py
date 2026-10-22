@@ -1,6 +1,7 @@
 """Security and authentication utilities."""
 
 import json
+import logging
 from typing import Optional, Union
 
 import httpx
@@ -10,6 +11,8 @@ from jose import JWTError, jwt
 from pydantic import BaseModel
 
 from app.core.config import settings
+
+logger = logging.getLogger(__name__)
 
 # Security scheme
 security = HTTPBearer()
@@ -77,14 +80,44 @@ class KeycloakJWTBearer:
 
         return rsa_key
 
+    def validate_audience(self, payload: dict) -> None:
+        """Require the API audience, or an allow-listed azp for legacy tokens.
+
+        Tokens issued before the audience mapper was added carry no aud. They are
+        accepted only when their azp (the issuing client) is in
+        KEYCLOAK_ALLOWED_CLIENTS, so other clients in the realm are rejected.
+        """
+        token_aud = payload.get("aud")
+        audiences = [token_aud] if isinstance(token_aud, str) else (token_aud or [])
+
+        if audiences:
+            if self.audience not in audiences:
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="Invalid audience",
+                )
+            return
+
+        client_id = payload.get("azp")
+        if client_id not in settings.keycloak_allowed_client_ids:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid audience",
+            )
+        logger.warning(
+            "Accepted token without aud from allow-listed client %s; "
+            "reissue its token with the audience mapper",
+            client_id,
+        )
+
     async def verify_token(self, token: str) -> TokenData:
         """Verify and decode the JWT token."""
         try:
             jwks = await self.get_jwks()
             self._jwks = jwks
 
-            # For M2M tokens, audience might not be present, so we decode without
-            # audience validation first, then validate manually if audience is configured
+            # Legacy M2M tokens may lack aud, so audience is checked in
+            # validate_audience instead of by jwt.decode
             decode_options = {
                 "verify_signature": True,
                 "verify_exp": True,
@@ -102,22 +135,7 @@ class KeycloakJWTBearer:
                 issuer=f"{self.server_url}/realms/{self.realm}",
             )
 
-            # Manual audience validation if configured and present in token
-            if self.audience and payload.get("aud"):
-                token_aud = payload.get("aud")
-                # Handle both string and list audiences
-                if isinstance(token_aud, str):
-                    if token_aud != self.audience:
-                        raise HTTPException(
-                            status_code=status.HTTP_401_UNAUTHORIZED,
-                            detail=f"Invalid audience: expected {self.audience}, got {token_aud}",
-                        )
-                elif isinstance(token_aud, list):
-                    if self.audience not in token_aud:
-                        raise HTTPException(
-                            status_code=status.HTTP_401_UNAUTHORIZED,
-                            detail=f"Invalid audience: {self.audience} not in {token_aud}",
-                        )
+            self.validate_audience(payload)
 
             return TokenData(**payload)
         except JWTError as e:

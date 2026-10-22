@@ -40,6 +40,19 @@ def test_log_level_is_uppercased():
     assert make_settings(app_log_level="debug").app_log_level == "DEBUG"
 
 
+@pytest.mark.parametrize(
+    "raw,expected",
+    [
+        ("", set()),
+        ("customer-acme-m2m", {"customer-acme-m2m"}),
+        (" customer-a-m2m, customer-b-m2m ,,", {"customer-a-m2m", "customer-b-m2m"}),
+    ],
+)
+def test_keycloak_allowed_clients_parsing(raw, expected):
+    settings = make_settings(keycloak_allowed_clients=raw)
+    assert settings.keycloak_allowed_client_ids == expected
+
+
 def test_app_recording_path_defaults_to_fusionpbx_recording_path():
     settings = make_settings(
         fusionpbx_recording_path="/srv/recordings", app_recording_path=None

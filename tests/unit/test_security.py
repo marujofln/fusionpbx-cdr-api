@@ -83,10 +83,54 @@ async def test_valid_token_returns_claims(validator, make_token):
 
 
 @pytest.mark.asyncio
-async def test_token_without_audience_is_accepted(validator, make_token):
-    """M2M tokens may omit aud; validation is skipped in that case."""
-    data = await validator.verify_token(make_token(aud=None))
+async def test_token_without_audience_from_allowed_client_is_accepted(
+    validator, make_token, app_settings, monkeypatch, caplog
+):
+    """Legacy M2M tokens without aud pass only when azp is allow-listed."""
+    monkeypatch.setattr(
+        app_settings, "keycloak_allowed_clients", "customer-acme-m2m,customer-b-m2m"
+    )
+
+    data = await validator.verify_token(make_token(aud=None, azp="customer-acme-m2m"))
+
     assert data.aud is None
+    assert "customer-acme-m2m" in caplog.text
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "allowed,azp",
+    [
+        pytest.param("", "customer-acme-m2m", id="empty-allow-list"),
+        pytest.param("customer-acme-m2m", "other-client", id="azp-not-allowed"),
+        pytest.param("customer-acme-m2m", None, id="no-azp"),
+    ],
+)
+async def test_token_without_audience_is_rejected(
+    validator, make_token, app_settings, monkeypatch, allowed, azp
+):
+    monkeypatch.setattr(app_settings, "keycloak_allowed_clients", allowed)
+
+    with pytest.raises(HTTPException) as exc_info:
+        await validator.verify_token(make_token(aud=None, azp=azp))
+
+    assert exc_info.value.status_code == 401
+    assert exc_info.value.detail == "Invalid audience"
+
+
+@pytest.mark.asyncio
+async def test_allowed_client_with_wrong_audience_is_rejected(
+    validator, make_token, app_settings, monkeypatch
+):
+    """The allow-list only covers tokens with no aud at all."""
+    monkeypatch.setattr(app_settings, "keycloak_allowed_clients", "customer-acme-m2m")
+
+    with pytest.raises(HTTPException) as exc_info:
+        await validator.verify_token(
+            make_token(aud="other-api", azp="customer-acme-m2m")
+        )
+
+    assert exc_info.value.status_code == 401
 
 
 @pytest.mark.asyncio

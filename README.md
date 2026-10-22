@@ -232,6 +232,19 @@ Customer B Machine → Keycloak (Client B) → Token with sip_domain: "customer-
    - Set "Access Token Lifespan" to `315360000` seconds (10 years)
    - Note: This is the default; individual clients can override
 
+2. **Create the API Audience Client Scope**:
+   The API rejects tokens whose `aud` claim does not contain `KEYCLOAK_AUDIENCE` (see [Token Audience](#token-audience-and-keycloak_allowed_clients)). Create one shared scope that adds it, then attach it to every customer client:
+   - Go to Client Scopes → Create
+   - Name: `cdr-api-audience`, Protocol: `openid-connect`, Type: `Default`, then "Save"
+   - Open the scope → "Mappers" tab → "Configure a new mapper" (or "Create") → "Audience"
+   - Configure:
+     - Name: `cdr-api-audience`
+     - Included Client Audience: leave empty
+     - Included Custom Audience: the value of `KEYCLOAK_AUDIENCE` (e.g. `cdr-api`)
+     - Add to access token: `ON`
+     - Add to ID token: `OFF`
+   - Click "Save"
+
 #### Per-Customer Configuration (Repeat for Each Customer)
 
 For each customer, create a dedicated Keycloak client following these steps:
@@ -304,7 +317,15 @@ b. **Create User Attribute Protocol Mapper**:
   - Add to access token: `ON`
 - Click "Save"
 
-##### Step 4: Provide Credentials to Customer
+##### Step 4: Add the API Audience
+
+- Go to Clients → [Customer's Client] → "Client scopes" tab
+- Click "Add client scope", select `cdr-api-audience`, and add it as **Default**
+- Request a token and check that `aud` contains the `KEYCLOAK_AUDIENCE` value (see [Verifying Token Claims](#verifying-token-claims))
+
+Without this step the API returns `401 Invalid audience` for the client's tokens.
+
+##### Step 5: Provide Credentials to Customer
 
 Provide the customer with:
 - **Client ID**: `customer-{name}-m2m`
@@ -349,15 +370,16 @@ curl -X GET "https://cdr.api.example.com/v1/cdr?period=today" \
   -H "Authorization: Bearer $TOKEN"
 ```
 
-#### Verifying Token Contains sip_domain
+#### Verifying Token Claims
 
-You can decode the token at [jwt.io](https://jwt.io) or use a JWT decoder. The token should contain:
+You can decode the token at [jwt.io](https://jwt.io) or use a JWT decoder. The token should contain `sip_domain`, and an `aud` that is or includes the API's `KEYCLOAK_AUDIENCE` value:
 
 ```json
 {
   "sub": "service-account-customer-acme-m2m",
+  "azp": "customer-acme-m2m",
   "sip_domain": "example.com",
-  "aud": "...",
+  "aud": "cdr-api",
   "exp": 1735689600,
   ...
 }
@@ -385,7 +407,30 @@ asyncio.run(main())
 
 ### Adding New Customers
 
-To add a new customer, simply repeat the "Per-Customer Configuration" steps above. **No application changes or restarts are needed** - the application automatically accepts tokens from any valid Keycloak client in the realm.
+To add a new customer, repeat the "Per-Customer Configuration" steps above, including [Step 4](#step-4-add-the-api-audience). **No application changes or restarts are needed**: the API accepts tokens from any client in the realm whose tokens carry the `KEYCLOAK_AUDIENCE` audience. Do not add new customers to `KEYCLOAK_ALLOWED_CLIENTS`; that list is only for legacy tokens.
+
+### Token Audience and KEYCLOAK_ALLOWED_CLIENTS
+
+Every access token must have an `aud` claim that equals, or is a list containing, `KEYCLOAK_AUDIENCE`. Tokens with any other audience get `401 Invalid audience`. This stops tokens issued to unrelated clients in the same realm from being used against the API.
+
+Tokens issued before the `cdr-api-audience` scope existed have **no `aud` claim**. Customers hold 10-year tokens, so the API can keep accepting them during a transition:
+
+- A token **with** `aud` must contain `KEYCLOAK_AUDIENCE`. `KEYCLOAK_ALLOWED_CLIENTS` does not apply to it.
+- A token **without** `aud` is accepted only if its `azp` claim (the client ID it was issued to) is listed in `KEYCLOAK_ALLOWED_CLIENTS`, a comma-separated list. Otherwise it gets `401 Invalid audience`.
+- Each accepted token without `aud` is logged at WARNING level:
+  `Accepted token without aud from allow-listed client customer-acme-m2m; reissue its token with the audience mapper`
+
+`KEYCLOAK_ALLOWED_CLIENTS` is empty by default, which means tokens without `aud` are rejected. **If you are upgrading a deployment whose customers already have tokens, set it before deploying**, or those customers lose access.
+
+Migration steps:
+
+1. Create the `cdr-api-audience` client scope and attach it to every customer client ([Realm-Level Configuration](#realm-level-configuration-one-time-setup), [Step 4](#step-4-add-the-api-audience)). Tokens issued from now on carry `aud`.
+2. List every existing customer client ID in `.env` and redeploy:
+   ```env
+   KEYCLOAK_ALLOWED_CLIENTS=customer-acme-m2m,customer-globex-m2m
+   ```
+3. Issue a new token to each customer. Once a customer has switched, remove their client ID from the list.
+4. When the warning above has stopped appearing in the logs (`docker-compose logs api | grep "without aud"`), set `KEYCLOAK_ALLOWED_CLIENTS=` (empty) and redeploy.
 
 ### Troubleshooting M2M Authentication
 
@@ -408,6 +453,15 @@ To add a new customer, simply repeat the "Per-Customer Configuration" steps abov
 - Check that the mapper has "Add to access token" set to ON
 - Ensure the service account user has the `sip_domain` attribute set (if using User Attribute mapper)
 - Decode the token at jwt.io to verify the `sip_domain` claim is present
+
+#### API Returns 401 Invalid audience
+
+**Problem**: Token is valid but API returns `401 Unauthorized: Invalid audience`
+
+**Solutions**:
+- Decode the token and check `aud`. It must be, or contain, the API's `KEYCLOAK_AUDIENCE` value
+- If `aud` is missing or wrong, attach the `cdr-api-audience` client scope to the client as **Default** ([Step 4](#step-4-add-the-api-audience)) and request a new token
+- If the customer still uses a legacy token without `aud`, add the token's `azp` value to `KEYCLOAK_ALLOWED_CLIENTS` until they get a new token ([Token Audience](#token-audience-and-keycloak_allowed_clients))
 
 #### Token Expires Too Quickly
 
@@ -451,6 +505,8 @@ KEYCLOAK_SERVER_URL=https://sso.example.com
 KEYCLOAK_REALM=your-realm-name
 KEYCLOAK_AUDIENCE=your-client-id-or-resource
 KEYCLOAK_ALGORITHMS=RS256
+# Legacy clients whose tokens have no aud (see Token Audience)
+KEYCLOAK_ALLOWED_CLIENTS=
 
 # Database Configuration (FusionPBX)
 FUSIONPBX_DB_HOST=localhost
@@ -514,6 +570,8 @@ ALLOWED_ORIGINS=["http://localhost:3000", "https://example.com"]
    KEYCLOAK_REALM=your-realm-name
    KEYCLOAK_AUDIENCE=your-client-id-or-resource
    KEYCLOAK_ALGORITHMS=RS256
+   # Legacy clients whose tokens have no aud (see Token Audience)
+   KEYCLOAK_ALLOWED_CLIENTS=
 
    # Database Configuration (FusionPBX)
    # For external database, use the hostname/IP of your FusionPBX server
@@ -874,8 +932,8 @@ uv run pytest --no-cov
 
 | File | Covers |
 |------|--------|
-| `tests/unit/test_config.py` | Settings parsing (`APP_DEBUG`, log level), `APP_RECORDING_PATH` fallback to `FUSIONPBX_RECORDING_PATH`, database URL and missing credentials |
-| `tests/unit/test_security.py` | JWT validation: valid tokens, missing/wrong audience, expired, wrong issuer, unknown `kid`, forged signature, malformed token; JWKS caching; `sip_domain` extraction; `GET /v1/me` |
+| `tests/unit/test_config.py` | Settings parsing (`APP_DEBUG`, log level, `KEYCLOAK_ALLOWED_CLIENTS`), `APP_RECORDING_PATH` fallback to `FUSIONPBX_RECORDING_PATH`, database URL and missing credentials |
+| `tests/unit/test_security.py` | JWT validation: valid tokens, wrong audience, missing audience with and without an allow-listed `azp`, expired, wrong issuer, unknown `kid`, forged signature, malformed token; JWKS caching; `sip_domain` extraction; `GET /v1/me` |
 | `tests/unit/test_cdr_service.py` | Start/end bounds for every `period` (with a frozen clock), last-hour default, domain filtering, custom date ranges |
 | `tests/unit/test_cdr_schemas.py` | `/v1/cdr_compat` format: date and duration formatting, fixed cost, recording URL building |
 | `tests/api/test_cdr_endpoints.py` | `GET /v1/cdr` and `GET /v1/cdr_compat`: authentication, period vs. custom range, server URI detection, and that both endpoints build identical recording URLs |
