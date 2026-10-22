@@ -61,7 +61,7 @@ Retrieves call detail records for the authenticated user's domain.
       "duration": 300.0,
       "billsec": 300.0,
       "hangup_cause": "NORMAL_CLEARING",
-      "recording": "http://localhost:3000/v1/recording/example.com/archive/2024/Jan/01/file.mp3"
+      "recording": "https://cdr.api.example.com/v1/recording/example.com/archive/2024/Jan/01/file.mp3"
     }
   ],
   "total": 1,
@@ -89,7 +89,7 @@ Retrieves call detail records in legacy-compatible format for the authenticated 
     "duration": "00:05:00",
     "cost": "R$ 0.00",
     "status": "NORMAL_CLEARING",
-    "audio": "http://localhost:3000/v1/recording/example.com/archive/2024/Jan/01/file.mp3"
+    "audio": "https://cdr.api.example.com/v1/recording/example.com/archive/2024/Jan/01/file.mp3"
   }
 ]
 ```
@@ -114,7 +114,7 @@ Retrieves audio recording files from the filesystem. This endpoint does not requ
 
 **Example:**
 ```bash
-curl -X GET "http://localhost:3000/v1/recording/example.com/archive/2024/Jan/01/recording.mp3" \
+curl -X GET "https://cdr.api.example.com/v1/recording/example.com/archive/2024/Jan/01/recording.mp3" \
   -H "Accept: audio/mpeg" \
   --output recording.mp3
 ```
@@ -154,7 +154,7 @@ curl -X POST "https://sso.example.com/realms/{REALM}/protocol/openid-connect/tok
 
 ```bash
 # Extract the access_token from the response above and use it
-curl -X GET "http://localhost:3000/v1/me" \
+curl -X GET "https://cdr.api.example.com/v1/me" \
   -H "Authorization: Bearer eyJhbGciOiJSUzI1NiIsInR5cCIgOiAiSldUIiwia2lkIiA6ICJ..."
 ```
 
@@ -170,7 +170,7 @@ TOKEN=$(curl -s -X POST "https://sso.example.com/realms/{REALM}/protocol/openid-
   -d "username=test_user" \
   -d "password=test_pass" | jq -r '.access_token')
 
-curl -X GET "http://localhost:3000/v1/me" \
+curl -X GET "https://cdr.api.example.com/v1/me" \
   -H "Authorization: Bearer $TOKEN"
 ```
 
@@ -345,7 +345,7 @@ TOKEN=$(curl -s -X POST "https://sso.example.com/realms/{REALM}/protocol/openid-
   -d "client_secret={CLIENT_SECRET}" | jq -r '.access_token')
 
 # Use token to call API
-curl -X GET "http://localhost:3000/v1/cdr?period=today" \
+curl -X GET "https://cdr.api.example.com/v1/cdr?period=today" \
   -H "Authorization: Bearer $TOKEN"
 ```
 
@@ -496,6 +496,9 @@ ALLOWED_ORIGINS=["http://localhost:3000", "https://example.com"]
 - **Docker Compose**: Version 2.0 or higher (or Docker Compose V2 plugin)
 - **Access to FusionPBX database**: The API needs network access to your FusionPBX PostgreSQL database
 - **Recordings directory**: Access to FusionPBX call recordings directory (if using recordings feature)
+- **A DNS name for the API** (e.g. `cdr.api.example.com`) pointing at the Docker host, with ports **80 and 443** reachable from the internet. Caddy uses them to obtain and renew a Let's Encrypt certificate automatically.
+
+> **Docker 1.13.1 / `docker-compose.2.1.yml`**: this legacy compose file has not been updated for the HTTPS Caddyfile. It still publishes port `3000` and does not pass `API_HOST` / `CADDY_UPSTREAM` to Caddy, while the Caddyfile no longer listens on `:3000`. Expect it to need the same `ports` and `environment` changes as `docker-compose.yml` before it works.
 
 ##### Step 1: Configure Environment Variables
 
@@ -525,19 +528,25 @@ ALLOWED_ORIGINS=["http://localhost:3000", "https://example.com"]
    APP_DEBUG=False
    APP_LOG_LEVEL=INFO
    APP_PORT=3001
-   # Optional: Set explicit server URI for recording URLs (auto-detected if not set)
-   # APP_SERVER_URI=http://your-domain.com
+   # Public URL used in recording links (recommended behind Caddy, see notes)
+   APP_SERVER_URI=https://cdr.api.example.com
    APP_RECORDING_PATH=/var/lib/freeswitch/recordings
    FUSIONPBX_RECORDING_PATH=/var/lib/freeswitch/recordings
 
    # CORS Configuration
    ALLOWED_ORIGINS=["http://localhost:3000", "https://example.com"]
+
+   # Caddy Configuration
+   API_HOST=cdr.api.example.com
+   CADDY_UPSTREAM=api:3001
    ```
 
    **Important Notes:**
    - `FUSIONPBX_DB_HOST`: Use the IP address or hostname of your FusionPBX server. If running on the same host, use `host.docker.internal` (Docker Desktop) or the host's IP address.
    - `FUSIONPBX_DB_PASSWORD`: Use the actual database password from your FusionPBX installation.
-   - `APP_SERVER_URI`: Optional. If not set, the API will auto-detect from request headers. Set this if you're behind a reverse proxy or need specific URLs in responses.
+   - `API_HOST`: The public hostname Caddy serves and requests a certificate for (default `cdr.api.example.com`). It must resolve to this host. For a local test without public DNS, `API_HOST=localhost` makes Caddy issue a certificate from its own local CA, which browsers and `curl` will not trust unless you install that CA (or use `curl -k`).
+   - `CADDY_UPSTREAM`: Where Caddy forwards requests (default `api:3001`). Change it only if you change `APP_PORT` or the service name.
+   - `APP_SERVER_URI`: If not set, the API builds recording URLs from the incoming request. Behind Caddy the request reaches the API over plain HTTP, and uvicorn by default ignores `X-Forwarded-Proto` from anything other than `127.0.0.1`, so auto-detected links will start with `http://`. Set it to `https://<API_HOST>` to get correct links.
 
 ##### Step 2: Configure Recordings Volume
 
@@ -631,11 +640,13 @@ docker-compose logs --tail=100 api
 
 ##### Step 6: Access the Application
 
-Once running, the application is available at:
-- **API Base URL**: http://localhost:3000
-- **Swagger UI**: http://localhost:3000/docs
-- **ReDoc**: http://localhost:3000/redoc
-- **Health Check**: http://localhost:3000/ (returns API information)
+Once running, the application is available at `https://<API_HOST>` (Caddy redirects HTTP on port 80 to HTTPS):
+- **API Base URL**: https://cdr.api.example.com
+- **Swagger UI**: https://cdr.api.example.com/docs
+- **ReDoc**: https://cdr.api.example.com/redoc
+- **Health Check**: https://cdr.api.example.com/health (`/` returns API information)
+
+The first start can take a few seconds while Caddy obtains the certificate; check `docker-compose logs caddy` if HTTPS does not come up.
 
 ##### Step 7: Stop and Cleanup
 
@@ -672,37 +683,40 @@ The Docker Compose setup consists of two services:
 
 2. **Caddy Service** (`fusionpbx-cdr-caddy`):
    - Official Caddy 2 Alpine image
-   - Reverse proxy listening on host port 3000
-   - Proxies all requests to API service
-   - Handles SSL/TLS termination (if configured)
+   - Reverse proxy listening on host ports 80 and 443, serving the hostname in `API_HOST`
+   - Obtains and renews the TLS certificate automatically, and redirects HTTP to HTTPS
+   - Proxies all requests to `CADDY_UPSTREAM` (the API service)
    - Preserves request headers for proper forwarding
+   - Stores certificates in the `caddy_data` volume (keep it, so certificates are not re-requested on every restart)
 
 **Network Architecture:**
 ```
-Internet → Host:3000 (Caddy) → Docker Network → API:3001
+Internet → Host:80/443 (Caddy, TLS) → Docker Network → API:3001 (HTTP)
 ```
 
 **Benefits:**
 - API service is not directly exposed (security)
-- Easy SSL/TLS configuration via Caddy
+- Automatic HTTPS via Caddy
 - Request header preservation
 - Health checks for both services
 - Automatic restart on failure
 
 ##### Port Configuration
 
-- **Caddy Proxy Port**: Configured in `docker-compose.yml` ports section (default: `3000:3000`)
-  - Change host port: `"8080:3000"` to use port 8080 on host
+- **Caddy Ports**: `80:80` and `443:443` in `docker-compose.yml`
+  - Automatic certificates need both ports reachable on the public hostname; remapping them to other host ports breaks the Let's Encrypt challenge
+- **Public Hostname**: `API_HOST` environment variable (used as the site address in the `Caddyfile`)
 - **API Internal Port**: Configured via `APP_PORT` environment variable (default: 3001)
   - Only accessible within Docker network
   - Do not expose this port to host for security
+  - If you change it, set `CADDY_UPSTREAM=api:<APP_PORT>` to match
 
 ##### Health Checks
 
 Both services include health checks:
 
 - **API Service**: Checks `http://localhost:3001/` every 30 seconds
-- **Caddy Service**: Checks `http://localhost:3000/` every 30 seconds
+- **Caddy Service**: Checks `http://localhost/` (port 80) every 30 seconds
 
 If a service fails its health check, Docker will restart it automatically.
 
@@ -730,9 +744,14 @@ If a service fails its health check, Docker will restart it automatically.
 # Check logs for errors
 docker-compose logs api
 
-# Check if port is already in use
-netstat -tulpn | grep 3000
+# Check if ports 80/443 are already in use
+netstat -tulpn | grep -E ':(80|443)\s'
 ```
+
+**HTTPS certificate not issued:**
+- Verify `API_HOST` resolves to this host's public IP
+- Verify ports 80 and 443 are open in the firewall and not used by another web server
+- Check `docker-compose logs caddy` for ACME errors
 
 **Database connection errors:**
 - Verify `FUSIONPBX_DB_HOST` is correct and reachable
@@ -775,8 +794,8 @@ uv run uvicorn app.main:app --reload --host 0.0.0.0 --port 3001
 ## API Documentation
 
 Once running, visit:
-- Swagger UI: http://localhost:3000/docs (Docker) or http://localhost:3001/docs (local)
-- ReDoc: http://localhost:3000/redoc (Docker) or http://localhost:3001/redoc (local)
+- Swagger UI: https://<API_HOST>/docs (Docker) or http://localhost:3001/docs (local)
+- ReDoc: https://<API_HOST>/redoc (Docker) or http://localhost:3001/redoc (local)
 
 ## Project Structure
 
@@ -786,7 +805,6 @@ fusionpbx-cdr-api/
 │   ├── api/
 │   │   └── v1/
 │   │       ├── endpoints/
-│   │       │   ├── auth.py
 │   │       │   ├── me.py
 │   │       │   ├── cdr.py
 │   │       │   └── recording.py
@@ -805,6 +823,17 @@ fusionpbx-cdr-api/
 │   │   ├── cdr_service.py
 │   │   └── keycloak_m2m.py
 │   └── main.py
+├── tests/
+│   ├── conftest.py
+│   ├── unit/
+│   │   ├── test_config.py
+│   │   ├── test_security.py
+│   │   ├── test_cdr_service.py
+│   │   └── test_cdr_schemas.py
+│   └── api/
+│       ├── test_cdr_endpoints.py
+│       ├── test_recording_endpoint.py
+│       └── test_root.py
 ├── pyproject.toml
 ├── uv.lock
 ├── env.example
@@ -822,14 +851,52 @@ This project follows PEP 8 and FastAPI best practices:
 - Comprehensive documentation
 
 ### Testing
+
+The test suite runs entirely offline: it needs no FusionPBX database, no Keycloak server and no `.env` file.
+
 ```bash
-# Run tests (when implemented)
+# Install dev dependencies (pytest, pytest-asyncio, pytest-cov, linters)
+uv sync --extra dev
+
+# Run the full suite (coverage report is printed and written to htmlcov/)
 uv run pytest
 
-# Run with coverage
-uv run pytest --cov=app
+# Run one file, one test, or tests matching a keyword
+uv run pytest tests/api/test_recording_endpoint.py
+uv run pytest tests/unit/test_security.py::test_unknown_kid_is_rejected
+uv run pytest -k range
 
-# Run linting
+# Skip coverage for faster runs
+uv run pytest --no-cov
+```
+
+#### What is tested
+
+| File | Covers |
+|------|--------|
+| `tests/unit/test_config.py` | Settings parsing (`APP_DEBUG`, log level), `APP_RECORDING_PATH` fallback to `FUSIONPBX_RECORDING_PATH`, database URL and missing credentials |
+| `tests/unit/test_security.py` | JWT validation: valid tokens, missing/wrong audience, expired, wrong issuer, unknown `kid`, forged signature, malformed token; JWKS caching; `sip_domain` extraction; `GET /v1/me` |
+| `tests/unit/test_cdr_service.py` | Start/end bounds for every `period` (with a frozen clock), last-hour default, domain filtering, custom date ranges |
+| `tests/unit/test_cdr_schemas.py` | `/v1/cdr_compat` format: date and duration formatting, fixed cost, recording URL building |
+| `tests/api/test_cdr_endpoints.py` | `GET /v1/cdr` and `GET /v1/cdr_compat`: authentication, period vs. custom range, server URI detection, and that both endpoints build identical recording URLs |
+| `tests/api/test_recording_endpoint.py` | `GET /v1/recording/...`: media types, `Range` requests (206), `ETag` / `If-Modified-Since` (304), 400/404/500 errors, path traversal protection |
+| `tests/api/test_root.py` | `/`, `/health` and the OpenAPI route list |
+
+#### How the tests work
+
+- **Environment**: `tests/conftest.py` sets test values for all required environment variables and turns off `.env` loading *before* importing the application, because the settings and database engine are created at import time. New test modules should rely on this and not set up their own environment.
+- **Database**: no queries reach PostgreSQL. Endpoint tests replace `CDRService` methods with fakes, and service tests use a fake session that records the SQL statement so its filters and parameters can be checked.
+- **Authentication**: endpoint tests use the `auth_client` fixture, which authenticates as `example.com`. The JWT tests sign real tokens with an RSA key generated during the test run and give the validator the matching JWKS.
+- **Settings overrides**: use the `app_settings` fixture with `monkeypatch.setattr(app_settings, "app_server_uri", ...)`; changes are undone after each test.
+- **Recordings**: recording tests build a temporary recordings folder with `tmp_path` and point `APP_RECORDING_PATH` at it.
+
+#### Known behavior covered by tests
+
+An unknown `period` value (e.g. `?period=forever`) is **not rejected**: it returns `200` with the last hour of records. `Query(enum=[...])` only documents the allowed values in the API docs. `test_unknown_period_is_not_validated` records this; flip its expectation if validation is added.
+
+### Linting
+
+```bash
 uv run black .
 uv run isort .
 uv run flake8 .
